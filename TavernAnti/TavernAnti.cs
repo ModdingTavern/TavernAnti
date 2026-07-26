@@ -28,7 +28,9 @@ public class TavernAntiPlugin : MelonPlugin
             // Called explicitly rather than relying on MelonLoader's implicit per-assembly
             // patching, since TavernLib does the latter without an explicit call anywhere
             // and that behavior isn't documented/guaranteed.
-            new Harmony("com.moddingtavern.tavernanti").PatchAll(Assembly.GetExecutingAssembly());
+            // Fully-qualified: MelonLoader ships a legacy "Harmony" namespace shim that
+            // collides with HarmonyLib.Harmony when both are in scope via `using`.
+            new HarmonyLib.Harmony("com.moddingtavern.tavernanti").PatchAll(Assembly.GetExecutingAssembly());
             TavernAntiLogger.Msg("Harmony patches applied");
         }
         catch (Exception e)

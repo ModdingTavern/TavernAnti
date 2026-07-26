@@ -21,7 +21,10 @@ namespace TavernAnti.Patches;
 /// evaluates the resulting transform position in a postfix and snaps it back to the last
 /// server-accepted position if implausible.
 /// </summary>
-[HarmonyPatch(typeof(NetworkEntity), nameof(NetworkEntity.SerializeMove))]
+// SerializeMove is private, so it can't be referenced via nameof() against the raw
+// (non-publicized) Root.Township.dll - Harmony resolves this string by reflection at
+// runtime instead, regardless of compile-time accessibility.
+[HarmonyPatch(typeof(NetworkEntity), "SerializeMove")]
 public static class MovementPlausibilityPatch
 {
     [HarmonyPrefix]

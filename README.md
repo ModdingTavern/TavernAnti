@@ -58,16 +58,30 @@ closes and why the fix is applied at the shared decode choke point rather than p
 
 ## Setup
 
-1. Populate `Dependencies\` and `Generated\` (both gitignored) the same way TavernLib's are:
-   copy the game's managed DLLs (`0Harmony.dll`, `MelonLoader.dll`, `MonoMod.*.dll`,
-   `Newtonsoft.Json.dll`, `NLog.dll`, `UnityEngine*.dll`, the full `Alta.*.dll` set, `kcp2k.dll`)
-   into `Dependencies\`, and a publicized `Root.Township-publicized.dll` into `Generated\`.
-   These can be copied directly from an existing `TavernLib\Dependencies\`/`TavernLib\Generated\`
-   checkout - same game version, same artifacts.
-2. Restore NuGet packages for `TavernAnti\packages.config` (JWT/IdentityModel packages, used by
-   `TrustedUserStore`).
-3. Build `TavernAnti.sln`. Output is `TavernAnti\bin\<Config>\TavernAnti.dll`.
-4. Drop the built DLL into the dedicated server's `Plugins\` folder, alongside `MelonLoader`
+1. Populate `Dependencies\` (gitignored): copy the game's managed DLLs (`Newtonsoft.Json.dll`,
+   `NLog.dll`, `UnityEngine*.dll`, the full `Alta.*.dll` set, `kcp2k.dll`) from
+   `<GameDir>\A Township Tale_Data\Managed\`, and `0Harmony.dll`/`MelonLoader.dll`/`MonoMod.*.dll`
+   from a MelonLoader install (`<GameDir>\MelonLoader\net472\`).
+2. **No publicizer needed** - `Root.Township` is referenced directly from
+   `<GameDir>\A Township Tale_Data\Managed\Root.Township.dll` (see the `HintPath` in
+   `TavernAnti.csproj`), not a publicized copy in `Generated\`. This is simpler to set up but
+   means the compiler enforces real C# accessibility: any Harmony patch target or field access
+   on a `private`/`internal` game member won't compile as normal dot-syntax or `nameof(...)`.
+   The fix, already applied everywhere this comes up, is consistent:
+   - **Private method as a Harmony patch target**: use a plain string instead of `nameof`, e.g.
+     `[HarmonyPatch(typeof(NetworkEntity), "SerializeMove")]` - Harmony resolves the name via
+     reflection at runtime regardless of compile-time visibility. See
+     `MovementPlausibilityPatch`/`CommandPermissionPatch`.
+   - **Private field access**: read it via `AccessTools.Field(typeof(X), "fieldName")` (cached
+     as a `static readonly FieldInfo`) instead of `instance.fieldName`. See
+     `InteractionGuardPatch.EntityField` / `EnforcementActions.IpAddressField`.
+   - If a fresh build error names another private member, apply the same recipe rather than
+     widening scope elsewhere.
+3. Restore NuGet packages for `TavernAnti\packages.config` (JWT/IdentityModel packages, used by
+   `TrustedUserStore`) - `nuget.exe restore TavernAnti.sln` works even without `dotnet restore`
+   support for `packages.config`-style projects.
+4. Build `TavernAnti.sln`. Output is `TavernAnti\bin\<Config>\TavernAnti.dll`.
+5. Drop the built DLL into the dedicated server's `Plugins\` folder, alongside `MelonLoader`
    and `TavernLib`.
 
 ## Configuration
@@ -87,25 +101,25 @@ for everyone.
 
 ## Verification status
 
-**Not yet build-verified** - this environment has no game install, so `Dependencies\`/
-`Generated\` couldn't be populated and the project has not been compiled. Before relying on
-this in production:
+**Build in progress** - `Dependencies\` and `packages\` are populated and NuGet-restored against
+a real local game install; remaining/future build errors should mostly be the
+private-member-access pattern described in Setup step 2. Once it compiles, confirm the two
+private-member Harmony targets (`NetworkEntity.SerializeMove`, `CommandSync.SyncCommand`) and the
+overload-disambiguated target (`UserRolesUtility.GetRolesFromIdentityToken(JwtSecurityToken)`)
+actually bind at runtime (MelonLoader logs a warning if a `[HarmonyPatch]` target fails to
+resolve) - these bind by name (and, for the last one, argument types) and will silently fail to
+patch if a method signature has shifted since this was written. Before relying on this in
+production:
 
-1. Populate dependencies and confirm a clean build against `Root.Township-publicized.dll`.
-   Pay particular attention to the private-member Harmony targets
-   (`NetworkEntity.SerializeMove`, `CommandSync.SyncCommand`) and the overload-disambiguated
-   target (`UserRolesUtility.GetRolesFromIdentityToken(JwtSecurityToken)`) - these bind by name
-   (and, for the last one, argument types) and will silently fail to patch if a method signature
-   has shifted since this was written.
-2. Local dedicated server + normal client, `dry_run: true`, confirm baseline join/play is
+1. Local dedicated server + normal client, `dry_run: true`, confirm baseline join/play is
    unaffected and nothing logs spuriously during normal play.
-3. A second client running a copy of a known exploit mod against the local test server:
+2. A second client running a copy of a known exploit mod against the local test server:
    trigger fly/speed-hack, item-vacuum/long-range grab, and the `RunCommandOnServer`
    reflection call as a non-operator account. Confirm each is flagged, and with `dry_run:
    false`, actually blocked.
-4. Confirm a ban actually writes to `users.json`'s `blacklist` node and a follow-up join
+3. Confirm a ban actually writes to `users.json`'s `blacklist` node and a follow-up join
    attempt is denied by TavernLib's `AuthManager`.
-5. Craft (or patch a client to send) a join token with a `"Policy":"dev"` claim as a
+4. Craft (or patch a client to send) a join token with a `"Policy":"dev"` claim as a
    non-operator, non-VR (e.g. desktop) client. Confirm the join is still denied with "You will
    need a VR headset to play" rather than sailing through the dev fast path. Then add that
    username to `operators.json` and confirm the same join now succeeds - this is the one check

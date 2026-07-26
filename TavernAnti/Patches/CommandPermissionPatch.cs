@@ -50,7 +50,10 @@ public static class CommandPermissionPatch
     private static IPlayer _lastNetworkedSender;
     private static DateTime _lastNetworkedSenderAt;
 
-    [HarmonyPatch(typeof(CommandSync), nameof(CommandSync.SyncCommand))]
+    // SyncCommand is private, so it can't be referenced via nameof() against the raw
+    // (non-publicized) Root.Township.dll - Harmony resolves this string by reflection at
+    // runtime instead, regardless of compile-time accessibility.
+    [HarmonyPatch(typeof(CommandSync), "SyncCommand")]
     [HarmonyPrefix]
     public static void StashSender(IPlayer player)
     {

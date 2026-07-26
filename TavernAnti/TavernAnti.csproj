@@ -129,7 +129,7 @@
       <HintPath>..\Dependencies\NLog.dll</HintPath>
     </Reference>
     <Reference Include="Root.Township">
-      <HintPath>..\Generated\Root.Township-publicized.dll</HintPath>
+      <HintPath>..\..\..\A Township Tale\A Township Tale_Data\Managed\Root.Township.dll</HintPath>
     </Reference>
     <Reference Include="System" />
     <Reference Include="System.Buffers, Version=4.0.5.0, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51, processorArchitecture=MSIL">

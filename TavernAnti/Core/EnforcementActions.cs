@@ -1,10 +1,17 @@
+using System.Reflection;
+using Alta.Networking;
 using Alta.Networking.Scripts.Player;
+using HarmonyLib;
 using TavernAnti.Config;
 
 namespace TavernAnti.Core;
 
 internal static class EnforcementActions
 {
+    // Connection.IpAddress is a private field, inaccessible via normal dot-syntax against
+    // the raw (non-publicized) Root.Township.dll - read via reflection instead.
+    private static readonly FieldInfo IpAddressField = AccessTools.Field(typeof(Connection), "IpAddress");
+
     public static void Kick(IPlayer player, string reason)
     {
         try
@@ -30,7 +37,8 @@ internal static class EnforcementActions
         try
         {
             var username = player?.UserInfo?.Username;
-            var ip = player?.ConnectionToRemotePlayer?.IpAddress;
+            var connection = player?.ConnectionToRemotePlayer;
+            var ip = connection != null ? IpAddressField.GetValue(connection) as string : null;
 
             TavernAntiLogger.Warn($"Banning {username} ({ip}): {reason}");
 

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Reflection;
 using Alta.Networking;
 using Alta.Networking.Scripts.Player;
 using Alta.Serialization;
@@ -29,6 +30,10 @@ public static class InteractionGuardPatch
 {
     private static readonly ConcurrentDictionary<IPlayer, Queue<DateTime>> InteractTimestamps = new();
 
+    // EntityMessageHandler.entity is a private field, inaccessible via normal dot-syntax
+    // against the raw (non-publicized) Root.Township.dll - read via reflection instead.
+    private static readonly FieldInfo EntityField = AccessTools.Field(typeof(EntityMessageHandler), "entity");
+
     [HarmonyPrefix]
     public static bool Prefix(EntityMessageHandler __instance, EntityMessageType type, IPlayer player, Stream stream)
     {
@@ -46,7 +51,8 @@ public static class InteractionGuardPatch
             return config.DryRun;
         }
 
-        var target = __instance.entity?.Transform;
+        var entity = EntityField.GetValue(__instance) as INetworkEntity;
+        var target = entity?.Transform;
         var playerTransform = player.Transform;
         if (target != null && playerTransform != null)
         {
