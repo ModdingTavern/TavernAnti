@@ -1,2 +1,118 @@
 # TavernAnti
-Anti-cheat measures for known exploits
+
+Server-authoritative anti-cheat for *A Township Tale*. Ships as a MelonLoader `MelonPlugin`
+(same category as [TavernLib](https://github.com/ModdingTavern/TavernLib)) that Tavern-hosted
+dedicated servers run to independently validate player movement, interactions, and console
+commands - regardless of what the connecting client has installed. A client-side anti-cheat
+can't stop a cheater who simply doesn't install it; this only does anything on the server.
+
+TavernAnti is a fully standalone repo with **no build dependency on TavernLib**. It shares two
+files on disk at runtime (`%AppData%\TheModdingTavern\users.json` for the trust store/blacklist,
+and TavernLib's `Plugins\` load location), but there is no project or binary reference between
+the two.
+
+## Why
+
+Research into the decompiled game confirmed it ships with **no anti-cheat layer at all**, and
+critically, **player movement is client-authoritative with zero server-side sanity checks
+anywhere**. Working exploit mods (not included in this repo) demonstrate item-vacuuming,
+speed-hacks, fly/noclip, arbitrary console-command execution, and more, all of which work
+specifically because the server trusts whatever a connected client claims.
+
+## What's implemented (Tier 1)
+
+| Patch | Closes |
+|---|---|
+| `MovementPlausibilityPatch` | Speed-hacks, teleport-hacks, fly/noclip - the single biggest confirmed gap. Evaluates every server-side position update against the last accepted one; snaps the transform back if implausible. |
+| `InteractionGuardPatch` | Item-vacuum, long-range raycast-grab, auto-steal. Rejects `Interact`/`InteractEnd` messages beyond plausible hand-reach or above a per-second rate limit. |
+| `UnauthorizedWriteEscalationPatch` | Turns the game's own existing (but log-only) `StreamAuthorityHelper.LogUnauthorizedMessage` detections into tracked, escalating violations. No new detection logic. |
+| `CommandPermissionPatch` | Arbitrary console-command execution (the `RunCommandOnServer` reflection exploit). See the in-code doc comment on this file for the full trace through `CommandSync`/`CommandService.Handle` - this is the one patch that **requires live verification** before trusting in enforcement mode; see below. |
+| `IdentityTokenClaimGuardPatch` | Root-cause fix for forged `"Policy":"dev"` identity-token claims. `JWTUtility.CreateFromString` - the single decode path every identity token in the codebase goes through - never validates a signature at all, for any caller; any player can hand-craft a token with any claims. This rewrites the raw token string to strip an unverifiable `"Policy"` claim (unless the claiming user is a TavernAnti operator) *before* `JWTUtility.CreateFromString` runs, so every consumer downstream - including `ServerPlayerConnectionHandlerOld.CheckIfPlayerIsAllowed`'s "skip allowed check for dev join token" fast path, which otherwise bypasses almost every other join check - sees a token that never had the claim. Fails open (leaves the token untouched) on any parsing surprise. |
+| `DeveloperClaimGuardPatch` | Defense-in-depth alongside `IdentityTokenClaimGuardPatch`: downgrades `IsDeveloper` back to `false` on `UserRolesUtility.GetRolesFromIdentityToken`'s result unless the claiming user is a TavernAnti operator, in case something ever constructs a `JwtSecurityToken` without going through `JWTUtility`. Rarely has anything left to do once the patch above is in place. |
+
+All patches gate on `NetworkSceneManager.IsServer && !NetworkSceneManager.IsLocalTest`, so the
+client-side copy of the plugin (which must still be installed, since MelonLoader loads
+everything in `Plugins\`) is a silent no-op.
+
+## Not implemented / explicit non-goals
+
+- **`StakeRateLimitPatch` (land-claim automation rate limiting)** - not implemented yet. The
+  exploit tool's own method names (`OutlineChunkWithStakes`/`DropStakeAt`) don't correspond to
+  any class found in the decompiled game source; the exploit DLL itself needs to be decompiled
+  first to find the actual target. Sequenced last per the plan.
+- **`PlatformClaimAuditPatch` (PC-as-VR platform spoofing)** - not implemented. Would only ever
+  be a low-weight, log-only telemetry signal (never a kick/ban trigger on its own), since it
+  can't be definitively verified server-side.
+- **ESP / wallhacks / minimap radar / full map reveal** - out of scope. The client already
+  legitimately receives this data over the wire (no interest-management/visibility culling
+  exists in the replication model), so a server-side patch can't stop a client from reading data
+  it was already sent. Needs a much larger architecture change.
+- **External C2 (outbound WebSocket/REST from a cheat client to a companion service)** -
+  happens entirely within the cheater's own process; nothing server-side to hook.
+- **Trade/vendor exploits** - a patch on `Alta.Trading.TradeVendor` was observed in the wild but
+  its exact effect is unconfirmed. Deferred until this plugin's own logging can characterize it.
+
+No remaining known gaps in the developer-role/identity-token-claim exploit family as of
+`IdentityTokenClaimGuardPatch` - see that file's doc comment for the full trace of what it
+closes and why the fix is applied at the shared decode choke point rather than per-consumer.
+
+## Setup
+
+1. Populate `Dependencies\` and `Generated\` (both gitignored) the same way TavernLib's are:
+   copy the game's managed DLLs (`0Harmony.dll`, `MelonLoader.dll`, `MonoMod.*.dll`,
+   `Newtonsoft.Json.dll`, `NLog.dll`, `UnityEngine*.dll`, the full `Alta.*.dll` set, `kcp2k.dll`)
+   into `Dependencies\`, and a publicized `Root.Township-publicized.dll` into `Generated\`.
+   These can be copied directly from an existing `TavernLib\Dependencies\`/`TavernLib\Generated\`
+   checkout - same game version, same artifacts.
+2. Restore NuGet packages for `TavernAnti\packages.config` (JWT/IdentityModel packages, used by
+   `TrustedUserStore`).
+3. Build `TavernAnti.sln`. Output is `TavernAnti\bin\<Config>\TavernAnti.dll`.
+4. Drop the built DLL into the dedicated server's `Plugins\` folder, alongside `MelonLoader`
+   and `TavernLib`.
+
+## Configuration
+
+`%AppData%\TheModdingTavern\TavernAnti\anticheat_config.json`, created with defaults on first
+run. **Ships with `"dry_run": true`** - every patch still evaluates and logs violations, but
+takes no enforcement action (no position snap-back, no dropped interactions, no kicks/bans).
+Run in dry-run against real server traffic first to tune `max_player_speed_mps`,
+`max_interact_reach`, and the violation thresholds before flipping it off.
+
+`%AppData%\TheModdingTavern\TavernAnti\operators.json` - explicit allow-list of usernames
+trusted for anything TavernAnti can't otherwise verify: running server console commands via the
+networked path (`CommandPermissionPatch`), and claiming an elevated identity-token role like
+`"Policy":"dev"` (`IdentityTokenClaimGuardPatch`/`DeveloperClaimGuardPatch`). Empty by default;
+server owners must populate it with real developers/admins or those features stay fully denied
+for everyone.
+
+## Verification status
+
+**Not yet build-verified** - this environment has no game install, so `Dependencies\`/
+`Generated\` couldn't be populated and the project has not been compiled. Before relying on
+this in production:
+
+1. Populate dependencies and confirm a clean build against `Root.Township-publicized.dll`.
+   Pay particular attention to the private-member Harmony targets
+   (`NetworkEntity.SerializeMove`, `CommandSync.SyncCommand`) and the overload-disambiguated
+   target (`UserRolesUtility.GetRolesFromIdentityToken(JwtSecurityToken)`) - these bind by name
+   (and, for the last one, argument types) and will silently fail to patch if a method signature
+   has shifted since this was written.
+2. Local dedicated server + normal client, `dry_run: true`, confirm baseline join/play is
+   unaffected and nothing logs spuriously during normal play.
+3. A second client running a copy of a known exploit mod against the local test server:
+   trigger fly/speed-hack, item-vacuum/long-range grab, and the `RunCommandOnServer`
+   reflection call as a non-operator account. Confirm each is flagged, and with `dry_run:
+   false`, actually blocked.
+4. Confirm a ban actually writes to `users.json`'s `blacklist` node and a follow-up join
+   attempt is denied by TavernLib's `AuthManager`.
+5. Craft (or patch a client to send) a join token with a `"Policy":"dev"` claim as a
+   non-operator, non-VR (e.g. desktop) client. Confirm the join is still denied with "You will
+   need a VR headset to play" rather than sailing through the dev fast path. Then add that
+   username to `operators.json` and confirm the same join now succeeds - this is the one check
+   that verifies `IdentityTokenClaimGuardPatch`'s string rewrite round-trips correctly through
+   the original `JWTUtility.CreateFromString` (padding/encoding mismatches would surface here
+   as a join failure for *everyone*, not just forged tokens, so this step matters even for
+   legitimate players).
+
+Never run exploit-mod binaries against a real production Tavern server - use a throwaway local
+test server only.
