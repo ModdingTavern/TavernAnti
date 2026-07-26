@@ -6,10 +6,18 @@ dedicated servers run to independently validate player movement, interactions, a
 commands - regardless of what the connecting client has installed. A client-side anti-cheat
 can't stop a cheater who simply doesn't install it; this only does anything on the server.
 
-TavernAnti is a fully standalone repo with **no build dependency on TavernLib**. It shares two
-files on disk at runtime (`%AppData%\TheModdingTavern\users.json` for the trust store/blacklist,
-and TavernLib's `Plugins\` load location), but there is no project or binary reference between
-the two.
+TavernAnti is a separate repo, but **does have a build dependency on TavernLib**: it references
+a built `TavernLib.dll` (dropped into `Dependencies\` like every other dependency, not a
+cross-repo MSBuild `ProjectReference`) and reuses TavernLib's public building blocks directly -
+`TavernLib.Services.IService`/`TavernServices` (the service locator) and
+`TavernLib.Backend.Server.Configs.ServerConfigFile<T>` (the generic JSON config base) - instead
+of maintaining its own copies. It keeps its own small logger (`TavernAntiLogger`) rather than
+reusing TavernLib's, since TavernLib's is `internal` and, more importantly, tied to TavernLib's
+own MelonLoader console identity - reusing it would make TavernAnti's log lines appear
+attributed to TavernLib. It also keeps its own read/write logic for `users.json`
+(`TrustedUserStore`) rather than TavernLib's typed `UserConfigFile`/`UserConfig`, since that
+class doesn't yet model fields (`roles`, `user_ids`) the live file already has - see
+`TrustedUserStore`'s doc comment.
 
 ## Why
 
@@ -58,11 +66,14 @@ closes and why the fix is applied at the shared decode choke point rather than p
 
 ## Setup
 
-1. Populate `Dependencies\` (gitignored): copy the game's managed DLLs (`Newtonsoft.Json.dll`,
-   `NLog.dll`, `UnityEngine*.dll`, the full `Alta.*.dll` set, `kcp2k.dll`) from
-   `<GameDir>\A Township Tale_Data\Managed\`, and `0Harmony.dll`/`MelonLoader.dll`/`MonoMod.*.dll`
-   from a MelonLoader install (`<GameDir>\MelonLoader\net472\`).
-2. **No publicizer needed** - `Root.Township` is referenced directly from
+1. Populate `Dependencies\`: copy the game's managed DLLs (`Newtonsoft.Json.dll`, `NLog.dll`,
+   `UnityEngine*.dll`, the full `Alta.*.dll` set, `kcp2k.dll`) from
+   `<GameDir>\A Township Tale_Data\Managed\`, `0Harmony.dll`/`MelonLoader.dll`/`MonoMod.*.dll`
+   from a MelonLoader install (`<GameDir>\MelonLoader\net472\`), and `TavernLib.dll` from a
+   TavernLib build (`TavernLib\TavernLib\bin\<Config>\TavernLib.dll` - build that repo first;
+   it needs the same `Dependencies\` population plus a publicized
+   `Generated\Root.Township-publicized.dll`, see TavernLib's own setup).
+2. **No publicizer needed for TavernAnti itself** - `Root.Township` is referenced directly from
    `<GameDir>\A Township Tale_Data\Managed\Root.Township.dll` (see the `HintPath` in
    `TavernAnti.csproj`), not a publicized copy in `Generated\`. This is simpler to set up but
    means the compiler enforces real C# accessibility: any Harmony patch target or field access
@@ -111,22 +122,21 @@ elevated identity-token role like `"Policy":"dev"` in `IdentityTokenClaimGuardPa
 
 No `"roles"` entry (or no `"owner"` in it) means fully denied for that user - there's one place
 server owners manage who's trusted, not two. `TrustedUserStore` reads/writes this file through a
-loose `JObject` rather than a fixed-shape C# DTO specifically because the live schema already has
-fields (this `roles` array, a `user_ids` list on `blacklist`) that aren't in TavernLib's own
-checked-in `UserConfigFile.cs` as of this writing - a strongly-typed mirror would silently drop
-anything it doesn't know about on every write-back.
+loose `JObject` rather than TavernLib's own typed `UserConfigFile`/`UserConfig` - a deliberate
+choice even with `TavernLib.dll` now referenced, since that class doesn't yet model fields (this
+`roles` array, a `user_ids` list on `blacklist`) that the live file already has; round-tripping
+through it would silently drop anything it doesn't know about on every write-back.
 
 ## Verification status
 
-**Build in progress** - `Dependencies\` and `packages\` are populated and NuGet-restored against
-a real local game install; remaining/future build errors should mostly be the
-private-member-access pattern described in Setup step 2. Once it compiles, confirm the two
-private-member Harmony targets (`NetworkEntity.SerializeMove`, `CommandSync.SyncCommand`) and the
-overload-disambiguated target (`UserRolesUtility.GetRolesFromIdentityToken(JwtSecurityToken)`)
-actually bind at runtime (MelonLoader logs a warning if a `[HarmonyPatch]` target fails to
-resolve) - these bind by name (and, for the last one, argument types) and will silently fail to
-patch if a method signature has shifted since this was written. Before relying on this in
-production:
+**Builds cleanly** against a real local game install + a locally-built `TavernLib.dll` (only the
+harmless AMD64/MSIL `MSB3270` warning, same as TavernLib itself). Not yet runtime-verified.
+Before relying on this in production, confirm the two private-member Harmony targets
+(`NetworkEntity.SerializeMove`, `CommandSync.SyncCommand`) and the overload-disambiguated target
+(`UserRolesUtility.GetRolesFromIdentityToken(JwtSecurityToken)`) actually bind at runtime
+(MelonLoader logs a warning if a `[HarmonyPatch]` target fails to resolve) - these bind by name
+(and, for the last one, argument types) and will silently fail to patch if a method signature has
+shifted since this was written. Then:
 
 1. Local dedicated server + normal client, `dry_run: true`, confirm baseline join/play is
    unaffected and nothing logs spuriously during normal play.
@@ -140,10 +150,9 @@ production:
    non-operator, non-VR (e.g. desktop) client. Confirm the join is still denied with "You will
    need a VR headset to play" rather than sailing through the dev fast path. Then add `"owner"`
    to that user's `roles` in `users.json` and confirm the same join now succeeds - this is the
-   one check
-   that verifies `IdentityTokenClaimGuardPatch`'s string rewrite round-trips correctly through
-   the original `JWTUtility.CreateFromString` (padding/encoding mismatches would surface here
-   as a join failure for *everyone*, not just forged tokens, so this step matters even for
+   one check that verifies `IdentityTokenClaimGuardPatch`'s string rewrite round-trips correctly
+   through the original `JWTUtility.CreateFromString` (padding/encoding mismatches would surface
+   here as a join failure for *everyone*, not just forged tokens, so this step matters even for
    legitimate players).
 
 Never run exploit-mod binaries against a real production Tavern server - use a throwaway local

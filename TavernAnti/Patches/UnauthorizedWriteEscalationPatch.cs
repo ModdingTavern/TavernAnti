@@ -2,7 +2,7 @@ using Alta.Networking;
 using Alta.Networking.Scripts.Player;
 using HarmonyLib;
 using TavernAnti.Core;
-using TavernAnti.Services;
+using TavernLib.Services;
 
 namespace TavernAnti.Patches;
 
@@ -21,7 +21,7 @@ public static class UnauthorizedWriteEscalationPatch
     {
         if (!NetworkSceneManager.IsServer || NetworkSceneManager.IsLocalTest) return;
 
-        TavernAntiServices.GetService<ViolationTracker>()
+        TavernServices.GetService<ViolationTracker>()
             ?.Report(player, ViolationType.UnauthorizedWrite, "StreamAuthorityHelper rejected an unauthorized network write");
     }
 }

@@ -5,7 +5,7 @@ using Alta.Api.DataTransferModels.Utility;
 using Alta.Networking;
 using HarmonyLib;
 using TavernAnti.Config;
-using TavernAnti.Services;
+using TavernLib.Services;
 
 namespace TavernAnti.Patches;
 
@@ -44,7 +44,7 @@ public static class DeveloperClaimGuardPatch
 
         var username = identityToken?.Claims?.FirstOrDefault(c => c.Type == "Username")?.Value;
 
-        var userStore = TavernAntiServices.GetService<TrustedUserStore>();
+        var userStore = TavernServices.GetService<TrustedUserStore>();
         if (userStore != null && userStore.IsOperator(username)) return; // trusted, claim stands
 
         TavernAntiLogger.Warn(

@@ -5,7 +5,7 @@ using MelonLoader;
 using MelonLoader.Logging;
 using TavernAnti.Config;
 using TavernAnti.Core;
-using TavernAnti.Services;
+using TavernLib.Services;
 
 [assembly: MelonInfo(typeof(TavernAnti.TavernAntiPlugin), "TavernAnti", "0.1.0", "Tavern Team", "https://github.com/ModdingTavern/TavernAnti")]
 namespace TavernAnti;
@@ -52,12 +52,16 @@ public class TavernAntiPlugin : MelonPlugin
 
             TavernAntiLogger.Msg("Booting TavernAnti in server mode");
 
+            // TavernServices is TavernLib's own static service locator - shared with TavernLib
+            // itself now that TavernLib.dll is a real reference, not TavernAnti's own copy.
+            // Safe: keyed by concrete type, and none of TavernAnti's service types collide with
+            // TavernLib's (TavernApiManager, DebugHelper, etc).
             var config = new AntiCheatConfigFile(TavernAntiDirectories.AntiCheatConfig);
             config.ReadFromFile();
-            TavernAntiServices.AddService(config);
+            TavernServices.AddService(config);
 
-            TavernAntiServices.AddService(new TrustedUserStore());
-            TavernAntiServices.AddService(new ViolationTracker(config));
+            TavernServices.AddService(new TrustedUserStore());
+            TavernServices.AddService(new ViolationTracker(config));
         }
         catch (Exception e)
         {

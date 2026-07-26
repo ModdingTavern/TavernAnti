@@ -4,7 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Alta.Networking.Scripts.Player;
 using TavernAnti.Config;
-using TavernAnti.Services;
+using TavernLib.Services;
 
 namespace TavernAnti.Core;
 
@@ -75,7 +75,7 @@ public class ViolationTracker(AntiCheatConfigFile config) : IService
 
         if (isBan)
         {
-            var userStore = TavernAntiServices.GetService<TrustedUserStore>();
+            var userStore = TavernServices.GetService<TrustedUserStore>();
             EnforcementActions.Ban(player, reason, userStore);
         }
         else

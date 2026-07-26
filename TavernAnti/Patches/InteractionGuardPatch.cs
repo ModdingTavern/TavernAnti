@@ -8,7 +8,7 @@ using Alta.Serialization;
 using HarmonyLib;
 using TavernAnti.Config;
 using TavernAnti.Core;
-using TavernAnti.Services;
+using TavernLib.Services;
 using UnityEngine;
 
 namespace TavernAnti.Patches;
@@ -41,8 +41,8 @@ public static class InteractionGuardPatch
         if (!NetworkSceneManager.IsServer || NetworkSceneManager.IsLocalTest) return true;
         if (player == null) return true;
 
-        var config = TavernAntiServices.GetService<AntiCheatConfigFile>()?.LastRead;
-        var tracker = TavernAntiServices.GetService<ViolationTracker>();
+        var config = TavernServices.GetService<AntiCheatConfigFile>()?.LastRead;
+        var tracker = TavernServices.GetService<ViolationTracker>();
         if (config == null || tracker == null) return true;
 
         if (IsOverRate(player, config.MaxInteractsPerSecond))

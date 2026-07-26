@@ -7,7 +7,7 @@ using ATT.Character.QuickAccessMenu;
 using HarmonyLib;
 using TavernAnti.Config;
 using TavernAnti.Core;
-using TavernAnti.Services;
+using TavernLib.Services;
 
 namespace TavernAnti.Patches;
 
@@ -78,11 +78,11 @@ public static class CommandPermissionPatch
         _lastNetworkedSender = null; // consume the attribution so it can't leak into an unrelated later call
 
         var username = sender.UserInfo?.Username;
-        var userStore = TavernAntiServices.GetService<TrustedUserStore>();
+        var userStore = TavernServices.GetService<TrustedUserStore>();
         if (userStore != null && userStore.IsOperator(username)) return true;
 
-        var config = TavernAntiServices.GetService<AntiCheatConfigFile>()?.LastRead;
-        TavernAntiServices.GetService<ViolationTracker>()?.Report(sender, ViolationType.CommandPermission,
+        var config = TavernServices.GetService<AntiCheatConfigFile>()?.LastRead;
+        TavernServices.GetService<ViolationTracker>()?.Report(sender, ViolationType.CommandPermission,
             $"Networked command \"{command}\" arrived with no CommandContext (would run as the server's own identity) and sender \"{username}\" is not an operator");
 
         if (config is not { DryRun: false }) return true;

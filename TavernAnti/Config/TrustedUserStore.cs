@@ -3,14 +3,15 @@ using System.IO;
 using System.Linq;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
-using TavernAnti.Services;
+using TavernLib;
+using TavernLib.Services;
 
 namespace TavernAnti.Config;
 
 /// <summary>
 /// Reads/writes the same on-disk trust store TavernLib already owns and enforces
-/// (%AppData%\TheModdingTavern\users.json). This is a live file-shape dependency, not a build
-/// dependency - there is no reference to TavernLib.dll anywhere in this project.
+/// (%AppData%\TheModdingTavern\users.json), via TavernLib.TavernDirectories for the path (a
+/// real build dependency now - see TavernAnti.csproj's reference to TavernLib.dll).
 ///
 /// IMPORTANT: TavernLib's UserConfigFile stores users/whitelist/blacklist together in a single
 /// users.json (confirmed by reading TavernApiManager.cs - the separate
@@ -18,14 +19,16 @@ namespace TavernAnti.Config;
 /// the enforced file). Bans MUST be appended to users.json's embedded "blacklist" node, or
 /// TavernLib's AuthManager will never see them.
 ///
-/// Reads/writes go through a loose JObject rather than a fixed-shape C# DTO on purpose: the
-/// live schema has already grown fields (a "roles" array per user, a "user_ids" list on
-/// blacklist) that aren't in TavernLib's own checked-in UserConfigFile.cs at the time this was
-/// written, meaning that class is behind whatever's actually deployed. A strongly-typed mirror
-/// here would silently drop any field it doesn't know about on every write-back (exactly what
-/// the previous version of this file did). Parsing loosely means TavernAnti only ever touches
+/// Reads/writes go through a loose JObject rather than TavernLib's own typed UserConfigFile/
+/// UserConfig - a deliberate choice even though TavernLib.dll is now a real reference. The live
+/// schema has already grown fields (a "roles" array per user, a "user_ids" list on blacklist)
+/// that aren't in TavernLib's own checked-in UserConfig class as of this writing, meaning that
+/// class is behind whatever's actually deployed. Round-tripping through it would silently drop
+/// any field it doesn't know about on every write-back (exactly what an earlier version of this
+/// file did with its own equivalent mirror). Parsing loosely means TavernAnti only ever touches
 /// the specific nodes it cares about and passes everything else through untouched, so it can't
-/// corrupt data TavernLib owns no matter how that schema keeps evolving.
+/// corrupt data TavernLib owns no matter how that schema keeps evolving - independent of whether
+/// TavernLib's own C# model of the file has caught up.
 /// </summary>
 public class TrustedUserStore : IService
 {
@@ -106,8 +109,8 @@ public class TrustedUserStore : IService
 
     private JObject ReadUsersFile()
     {
-        var path = TavernAntiDirectories.Users;
-        Directory.CreateDirectory(TavernAntiDirectories.ModdingTavern);
+        var path = TavernDirectories.Users;
+        Directory.CreateDirectory(TavernDirectories.ModdingTavern);
 
         if (!File.Exists(path)) return new JObject();
 
@@ -117,8 +120,8 @@ public class TrustedUserStore : IService
 
     private void WriteUsersFile(JObject root)
     {
-        var path = TavernAntiDirectories.Users;
-        Directory.CreateDirectory(TavernAntiDirectories.ModdingTavern);
+        var path = TavernDirectories.Users;
+        Directory.CreateDirectory(TavernDirectories.ModdingTavern);
 
         File.WriteAllText(path, root.ToString(Formatting.Indented));
     }

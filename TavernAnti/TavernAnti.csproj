@@ -131,6 +131,9 @@
     <Reference Include="Root.Township">
       <HintPath>..\..\..\A Township Tale\A Township Tale_Data\Managed\Root.Township.dll</HintPath>
     </Reference>
+    <Reference Include="TavernLib">
+      <HintPath>..\Dependencies\TavernLib.dll</HintPath>
+    </Reference>
     <Reference Include="System" />
     <Reference Include="System.Buffers, Version=4.0.5.0, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51, processorArchitecture=MSIL">
       <HintPath>..\packages\System.Buffers.4.6.1\lib\net462\System.Buffers.dll</HintPath>
@@ -193,8 +196,6 @@
     <Compile Include="Patches\MovementPlausibilityPatch.cs" />
     <Compile Include="Patches\UnauthorizedWriteEscalationPatch.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
-    <Compile Include="Services\IService.cs" />
-    <Compile Include="Services\TavernAntiServices.cs" />
     <Compile Include="TavernAnti.cs" />
     <Compile Include="TavernAntiDirectories.cs" />
     <Compile Include="TavernAntiLogger.cs" />

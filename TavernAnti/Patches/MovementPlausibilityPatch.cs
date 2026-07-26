@@ -4,7 +4,7 @@ using Alta.Serialization;
 using HarmonyLib;
 using TavernAnti.Config;
 using TavernAnti.Core;
-using TavernAnti.Services;
+using TavernLib.Services;
 using UnityEngine;
 
 namespace TavernAnti.Patches;
@@ -42,8 +42,8 @@ public static class MovementPlausibilityPatch
         var newPosition = __instance.transform.position;
         if (newPosition == __state) return; // vanilla didn't apply a move from this call
 
-        var config = TavernAntiServices.GetService<AntiCheatConfigFile>()?.LastRead;
-        var tracker = TavernAntiServices.GetService<ViolationTracker>();
+        var config = TavernServices.GetService<AntiCheatConfigFile>()?.LastRead;
+        var tracker = TavernServices.GetService<ViolationTracker>();
         if (config == null || tracker == null) return;
 
         var violation = PlayerMovementState.Evaluate(

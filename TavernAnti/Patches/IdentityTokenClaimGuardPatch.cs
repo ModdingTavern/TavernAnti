@@ -6,7 +6,7 @@ using HarmonyLib;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using TavernAnti.Config;
-using TavernAnti.Services;
+using TavernLib.Services;
 
 namespace TavernAnti.Patches;
 
@@ -65,7 +65,7 @@ public static class IdentityTokenClaimGuardPatch
             if (string.IsNullOrEmpty(policy)) return; // nothing privileged claimed - nothing to guard
 
             var username = payload["Username"]?.Value<string>();
-            var userStore = TavernAntiServices.GetService<TrustedUserStore>();
+            var userStore = TavernServices.GetService<TrustedUserStore>();
             if (userStore != null && userStore.IsOperator(username)) return; // trusted, leave the token as-is
 
             TavernAntiLogger.Warn(
