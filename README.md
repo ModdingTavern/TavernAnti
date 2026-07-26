@@ -6,18 +6,20 @@ dedicated servers run to independently validate player movement, interactions, a
 commands - regardless of what the connecting client has installed. A client-side anti-cheat
 can't stop a cheater who simply doesn't install it; this only does anything on the server.
 
-TavernAnti is a separate repo, but **does have a build dependency on TavernLib**: it references
-a built `TavernLib.dll` (dropped into `Dependencies\` like every other dependency, not a
-cross-repo MSBuild `ProjectReference`) and reuses TavernLib's public building blocks directly -
-`TavernLib.Services.IService`/`TavernServices` (the service locator) and
-`TavernLib.Backend.Server.Configs.ServerConfigFile<T>` (the generic JSON config base) - instead
-of maintaining its own copies. It keeps its own small logger (`TavernAntiLogger`) rather than
-reusing TavernLib's, since TavernLib's is `internal` and, more importantly, tied to TavernLib's
-own MelonLoader console identity - reusing it would make TavernAnti's log lines appear
-attributed to TavernLib. It also keeps its own read/write logic for `users.json`
-(`TrustedUserStore`) rather than TavernLib's typed `UserConfigFile`/`UserConfig`, since that
-class doesn't yet model fields (`roles`, `user_ids`) the live file already has - see
-`TrustedUserStore`'s doc comment.
+TavernAnti is a separate repo, but **does have a build dependency on TavernLib**, and now a
+runtime one too: it references a built `TavernLib.dll` (dropped into `Dependencies\` like every
+other dependency, not a cross-repo MSBuild `ProjectReference`) and reuses TavernLib's public
+building blocks directly - `TavernLib.Services.IService`/`TavernServices` (the service locator),
+`TavernLib.Backend.Server.Configs.ServerConfigFile<T>` (the generic JSON config base), and now
+`TavernLib.Backend.Api.TavernApiManager.UserConfig` itself (TavernLib's live, in-memory user
+store - see `TrustedUserStore`) - instead of maintaining its own copies. TavernLib added `Roles`
+(per-user) and `UserIds` (on `blacklist`) to its `UserConfig` model specifically so TavernAnti
+could depend on it directly rather than parsing `users.json` independently. **TavernLib is now a
+hard runtime requirement**, not just a same-file cooperation: without it installed and running in
+server mode, `TrustedUserStore` fails closed (no operator trust, bans log but don't persist). The
+one thing TavernAnti still keeps its own copy of is its logger (`TavernAntiLogger`), since
+TavernLib's is `internal` and, more importantly, tied to TavernLib's own MelonLoader console
+identity - reusing it would make TavernAnti's log lines appear attributed to TavernLib.
 
 ## Why
 
@@ -72,7 +74,10 @@ closes and why the fix is applied at the shared decode choke point rather than p
    from a MelonLoader install (`<GameDir>\MelonLoader\net472\`), and `TavernLib.dll` from a
    TavernLib build (`TavernLib\TavernLib\bin\<Config>\TavernLib.dll` - build that repo first;
    it needs the same `Dependencies\` population plus a publicized
-   `Generated\Root.Township-publicized.dll`, see TavernLib's own setup).
+   `Generated\Root.Township-publicized.dll`, see TavernLib's own setup). **`TavernLib.dll` is a
+   plain copied file, not a project reference** - if TavernLib changes (e.g. its `UserConfig`
+   shape again), rebuild TavernLib and re-copy the DLL, or TavernAnti will keep building against
+   a stale copy with no warning.
 2. **No publicizer needed for TavernAnti itself** - `Root.Township` is referenced directly from
    `<GameDir>\A Township Tale_Data\Managed\Root.Township.dll` (see the `HintPath` in
    `TavernAnti.csproj`), not a publicized copy in `Generated\`. This is simpler to set up but
@@ -89,8 +94,9 @@ closes and why the fix is applied at the shared decode choke point rather than p
    - If a fresh build error names another private member, apply the same recipe rather than
      widening scope elsewhere.
 3. Restore NuGet packages for `TavernAnti\packages.config` (JWT/IdentityModel packages, used by
-   `TrustedUserStore`) - `nuget.exe restore TavernAnti.sln` works even without `dotnet restore`
-   support for `packages.config`-style projects.
+   `DeveloperClaimGuardPatch`/`IdentityTokenClaimGuardPatch`'s `JwtSecurityToken` handling) -
+   `nuget.exe restore TavernAnti.sln` works even without `dotnet restore` support for
+   `packages.config`-style projects.
 4. Build `TavernAnti.sln`. Output is `TavernAnti\bin\<Config>\TavernAnti.dll`.
 5. Drop the built DLL into the dedicated server's `Plugins\` folder, alongside `MelonLoader`
    and `TavernLib`.
@@ -103,11 +109,12 @@ takes no enforcement action (no position snap-back, no dropped interactions, no 
 Run in dry-run against real server traffic first to tune `max_player_speed_mps`,
 `max_interact_reach`, and the violation thresholds before flipping it off.
 
-**Trust** reuses TavernLib's own `%AppData%\TheModdingTavern\users.json` rather than a separate
-TavernAnti-owned allow-list: a user is trusted for anything TavernAnti can't otherwise verify
-(running server console commands via the networked path in `CommandPermissionPatch`, claiming an
-elevated identity-token role like `"Policy":"dev"` in `IdentityTokenClaimGuardPatch`/
-`DeveloperClaimGuardPatch`) if their entry under `users` has `"owner"` in its `"roles"` array:
+**Trust** reuses TavernLib's own live `UserConfig` (backed by
+`%AppData%\TheModdingTavern\users.json`) rather than a separate TavernAnti-owned allow-list: a
+user is trusted for anything TavernAnti can't otherwise verify (running server console commands
+via the networked path in `CommandPermissionPatch`, claiming an elevated identity-token role like
+`"Policy":"dev"` in `IdentityTokenClaimGuardPatch`/`DeveloperClaimGuardPatch`) if their entry
+under `users` has `"owner"` in its `"roles"` array:
 
 ```json
 "users": {
@@ -121,11 +128,11 @@ elevated identity-token role like `"Policy":"dev"` in `IdentityTokenClaimGuardPa
 ```
 
 No `"roles"` entry (or no `"owner"` in it) means fully denied for that user - there's one place
-server owners manage who's trusted, not two. `TrustedUserStore` reads/writes this file through a
-loose `JObject` rather than TavernLib's own typed `UserConfigFile`/`UserConfig` - a deliberate
-choice even with `TavernLib.dll` now referenced, since that class doesn't yet model fields (this
-`roles` array, a `user_ids` list on `blacklist`) that the live file already has; round-tripping
-through it would silently drop anything it doesn't know about on every write-back.
+server owners manage who's trusted, not two. `TrustedUserStore` doesn't read/write the file
+itself at all: it fetches `TavernApiManager.UserConfig` from `TavernServices` and reads/mutates
+that live object directly, the exact same instance TavernLib's own `AuthManager` uses. That
+avoids the lost-update risk of two independent readers/writers touching the same file, and means
+a ban or role change is visible to TavernLib immediately, without a round trip through disk.
 
 ## Verification status
 
