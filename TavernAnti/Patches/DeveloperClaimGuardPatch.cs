@@ -25,11 +25,13 @@ namespace TavernAnti.Patches;
 /// with any claims they want.
 ///
 /// This patch treats a claimed developer role the same way CommandPermissionPatch treats an
-/// unattributed networked command: fail closed unless the claiming user is on TavernAnti's own
-/// operator allow-list (operators.json). In practice IdentityTokenClaimGuardPatch already
-/// strips an unverifiable "Policy" claim from the raw token string before this method ever
-/// runs, so this postfix rarely has anything left to do - it's kept as defense-in-depth in case
-/// some other path constructs a JwtSecurityToken without going through JWTUtility.
+/// unattributed networked command: fail closed unless the claiming user has an "owner" entry in
+/// users.json's roles array (see TrustedUserStore.IsOperator - reuses TavernLib's own trust
+/// store instead of a separate TavernAnti-owned allow-list). In practice
+/// IdentityTokenClaimGuardPatch already strips an unverifiable "Policy" claim from the raw token
+/// string before this method ever runs, so this postfix rarely has anything left to do - it's
+/// kept as defense-in-depth in case some other path constructs a JwtSecurityToken without going
+/// through JWTUtility.
 /// </summary>
 [HarmonyPatch(typeof(UserRolesUtility), nameof(UserRolesUtility.GetRolesFromIdentityToken), [typeof(JwtSecurityToken)])]
 public static class DeveloperClaimGuardPatch
@@ -48,7 +50,7 @@ public static class DeveloperClaimGuardPatch
         TavernAntiLogger.Warn(
             $"Downgrading unverifiable developer-role claim for username='{username ?? "<unknown>"}' - " +
             "identity token signatures aren't meaningfully checked post-shutdown, so a claimed " +
-            "\"Policy\":\"dev\" can't be trusted without an explicit TavernAnti operator entry");
+            "\"Policy\":\"dev\" can't be trusted without an \"owner\" role in users.json");
 
         __result.IsDeveloper = false;
     }

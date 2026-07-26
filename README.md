@@ -27,8 +27,8 @@ specifically because the server trusts whatever a connected client claims.
 | `InteractionGuardPatch` | Item-vacuum, long-range raycast-grab, auto-steal. Rejects `Interact`/`InteractEnd` messages beyond plausible hand-reach or above a per-second rate limit. |
 | `UnauthorizedWriteEscalationPatch` | Turns the game's own existing (but log-only) `StreamAuthorityHelper.LogUnauthorizedMessage` detections into tracked, escalating violations. No new detection logic. |
 | `CommandPermissionPatch` | Arbitrary console-command execution (the `RunCommandOnServer` reflection exploit). See the in-code doc comment on this file for the full trace through `CommandSync`/`CommandService.Handle` - this is the one patch that **requires live verification** before trusting in enforcement mode; see below. |
-| `IdentityTokenClaimGuardPatch` | Root-cause fix for forged `"Policy":"dev"` identity-token claims. `JWTUtility.CreateFromString` - the single decode path every identity token in the codebase goes through - never validates a signature at all, for any caller; any player can hand-craft a token with any claims. This rewrites the raw token string to strip an unverifiable `"Policy"` claim (unless the claiming user is a TavernAnti operator) *before* `JWTUtility.CreateFromString` runs, so every consumer downstream - including `ServerPlayerConnectionHandlerOld.CheckIfPlayerIsAllowed`'s "skip allowed check for dev join token" fast path, which otherwise bypasses almost every other join check - sees a token that never had the claim. Fails open (leaves the token untouched) on any parsing surprise. |
-| `DeveloperClaimGuardPatch` | Defense-in-depth alongside `IdentityTokenClaimGuardPatch`: downgrades `IsDeveloper` back to `false` on `UserRolesUtility.GetRolesFromIdentityToken`'s result unless the claiming user is a TavernAnti operator, in case something ever constructs a `JwtSecurityToken` without going through `JWTUtility`. Rarely has anything left to do once the patch above is in place. |
+| `IdentityTokenClaimGuardPatch` | Root-cause fix for forged `"Policy":"dev"` identity-token claims. `JWTUtility.CreateFromString` - the single decode path every identity token in the codebase goes through - never validates a signature at all, for any caller; any player can hand-craft a token with any claims. This rewrites the raw token string to strip an unverifiable `"Policy"` claim (unless the claiming user has `"owner"` in their `users.json` roles) *before* `JWTUtility.CreateFromString` runs, so every consumer downstream - including `ServerPlayerConnectionHandlerOld.CheckIfPlayerIsAllowed`'s "skip allowed check for dev join token" fast path, which otherwise bypasses almost every other join check - sees a token that never had the claim. Fails open (leaves the token untouched) on any parsing surprise. |
+| `DeveloperClaimGuardPatch` | Defense-in-depth alongside `IdentityTokenClaimGuardPatch`: downgrades `IsDeveloper` back to `false` on `UserRolesUtility.GetRolesFromIdentityToken`'s result unless the claiming user has `"owner"` in their `users.json` roles, in case something ever constructs a `JwtSecurityToken` without going through `JWTUtility`. Rarely has anything left to do once the patch above is in place. |
 
 All patches gate on `NetworkSceneManager.IsServer && !NetworkSceneManager.IsLocalTest`, so the
 client-side copy of the plugin (which must still be installed, since MelonLoader loads
@@ -92,12 +92,29 @@ takes no enforcement action (no position snap-back, no dropped interactions, no 
 Run in dry-run against real server traffic first to tune `max_player_speed_mps`,
 `max_interact_reach`, and the violation thresholds before flipping it off.
 
-`%AppData%\TheModdingTavern\TavernAnti\operators.json` - explicit allow-list of usernames
-trusted for anything TavernAnti can't otherwise verify: running server console commands via the
-networked path (`CommandPermissionPatch`), and claiming an elevated identity-token role like
-`"Policy":"dev"` (`IdentityTokenClaimGuardPatch`/`DeveloperClaimGuardPatch`). Empty by default;
-server owners must populate it with real developers/admins or those features stay fully denied
-for everyone.
+**Trust** reuses TavernLib's own `%AppData%\TheModdingTavern\users.json` rather than a separate
+TavernAnti-owned allow-list: a user is trusted for anything TavernAnti can't otherwise verify
+(running server console commands via the networked path in `CommandPermissionPatch`, claiming an
+elevated identity-token role like `"Policy":"dev"` in `IdentityTokenClaimGuardPatch`/
+`DeveloperClaimGuardPatch`) if their entry under `users` has `"owner"` in its `"roles"` array:
+
+```json
+"users": {
+  "ftwimcody": {
+    "user_id": 2000000001,
+    "token": "...",
+    "registered_from": "...",
+    "roles": ["owner"]
+  }
+}
+```
+
+No `"roles"` entry (or no `"owner"` in it) means fully denied for that user - there's one place
+server owners manage who's trusted, not two. `TrustedUserStore` reads/writes this file through a
+loose `JObject` rather than a fixed-shape C# DTO specifically because the live schema already has
+fields (this `roles` array, a `user_ids` list on `blacklist`) that aren't in TavernLib's own
+checked-in `UserConfigFile.cs` as of this writing - a strongly-typed mirror would silently drop
+anything it doesn't know about on every write-back.
 
 ## Verification status
 
@@ -121,8 +138,9 @@ production:
    attempt is denied by TavernLib's `AuthManager`.
 4. Craft (or patch a client to send) a join token with a `"Policy":"dev"` claim as a
    non-operator, non-VR (e.g. desktop) client. Confirm the join is still denied with "You will
-   need a VR headset to play" rather than sailing through the dev fast path. Then add that
-   username to `operators.json` and confirm the same join now succeeds - this is the one check
+   need a VR headset to play" rather than sailing through the dev fast path. Then add `"owner"`
+   to that user's `roles` in `users.json` and confirm the same join now succeeds - this is the
+   one check
    that verifies `IdentityTokenClaimGuardPatch`'s string rewrite round-trips correctly through
    the original `JWTUtility.CreateFromString` (padding/encoding mismatches would surface here
    as a join failure for *everyone*, not just forged tokens, so this step matters even for

@@ -34,11 +34,12 @@ namespace TavernAnti.Patches;
 /// Rather than trying to intercept every current and future consumer individually, this
 /// patches the shared decode itself: before JWTUtility.CreateFromString runs, this rewrites
 /// the raw token string to strip an unverifiable "Policy" claim (unless the token's Username
-/// claim belongs to a TavernAnti operator), so every consumer - CheckIfPlayerIsAllowed's direct
-/// claim check, UserRolesUtility, and anything else that decodes identity tokens - sees a
-/// token that never had the claim in the first place. This makes DeveloperClaimGuardPatch's
-/// own check largely redundant in practice (the claim won't survive this far for non-operators)
-/// but it's kept as defense-in-depth in case some path decodes tokens another way.
+/// claim has an "owner" role in users.json, per TrustedUserStore.IsOperator), so every
+/// consumer - CheckIfPlayerIsAllowed's direct claim check, UserRolesUtility, and anything else
+/// that decodes identity tokens - sees a token that never had the claim in the first place.
+/// This makes DeveloperClaimGuardPatch's own check largely redundant in practice (the claim
+/// won't survive this far for non-operators) but it's kept as defense-in-depth in case some
+/// path decodes tokens another way.
 ///
 /// Fails open by design: any parsing surprise leaves the token untouched rather than risking a
 /// crash in the join/command pipeline. That means the worst case of a bug here is "no worse
@@ -70,7 +71,7 @@ public static class IdentityTokenClaimGuardPatch
             TavernAntiLogger.Warn(
                 $"Stripping unverifiable Policy=\"{policy}\" claim from an identity token for username='{username ?? "<unknown>"}' " +
                 "before it reaches any consumer - JWTUtility.CreateFromString never checks a signature, so this claim can't be " +
-                "trusted without an explicit TavernAnti operator entry");
+                "trusted without an \"owner\" role in users.json");
 
             payload.Remove("Policy");
             segments[1] = EncodeSegment(payload.ToString(Formatting.None));

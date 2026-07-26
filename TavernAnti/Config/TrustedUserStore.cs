@@ -1,41 +1,54 @@
 using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using TavernAnti.Services;
 
 namespace TavernAnti.Config;
 
 /// <summary>
-/// Reads/writes the same on-disk trust-store files TavernLib already owns and enforces
-/// (%AppData%\TheModdingTavern\users.json), plus TavernAnti's own operator allow-list.
-/// This is a live file-shape dependency, not a build dependency - there is no reference
-/// to TavernLib.dll anywhere in this project.
+/// Reads/writes the same on-disk trust store TavernLib already owns and enforces
+/// (%AppData%\TheModdingTavern\users.json). This is a live file-shape dependency, not a build
+/// dependency - there is no reference to TavernLib.dll anywhere in this project.
 ///
-/// IMPORTANT: TavernLib's UserConfigFile stores users/whitelist/blacklist together in a
-/// single users.json (confirmed by reading TavernApiManager.cs - the separate
-/// TavernDirectories.Blacklist/.Whitelist path constants in TavernLib are not actually
-/// used for the enforced file). Bans MUST be appended to users.json's embedded "blacklist"
-/// node, not a standalone blacklist.json, or TavernLib's AuthManager will never see them.
+/// IMPORTANT: TavernLib's UserConfigFile stores users/whitelist/blacklist together in a single
+/// users.json (confirmed by reading TavernApiManager.cs - the separate
+/// TavernDirectories.Blacklist/.Whitelist path constants in TavernLib are not actually used for
+/// the enforced file). Bans MUST be appended to users.json's embedded "blacklist" node, or
+/// TavernLib's AuthManager will never see them.
+///
+/// Reads/writes go through a loose JObject rather than a fixed-shape C# DTO on purpose: the
+/// live schema has already grown fields (a "roles" array per user, a "user_ids" list on
+/// blacklist) that aren't in TavernLib's own checked-in UserConfigFile.cs at the time this was
+/// written, meaning that class is behind whatever's actually deployed. A strongly-typed mirror
+/// here would silently drop any field it doesn't know about on every write-back (exactly what
+/// the previous version of this file did). Parsing loosely means TavernAnti only ever touches
+/// the specific nodes it cares about and passes everything else through untouched, so it can't
+/// corrupt data TavernLib owns no matter how that schema keeps evolving.
 /// </summary>
 public class TrustedUserStore : IService
 {
-    private const string OperatorsFileName = "operators.json";
+    // The role string in a user's "roles" array that grants TavernAnti's elevated trust
+    // (running networked console commands, claiming a developer identity-token role).
+    private const string TrustedRole = "owner";
 
     public void AppendBan(string username, string ip)
     {
         try
         {
-            var store = ReadUserStore();
+            var root = ReadUsersFile();
+            var blacklist = root["blacklist"] as JObject;
+            if (blacklist == null)
+            {
+                blacklist = new JObject();
+                root["blacklist"] = blacklist;
+            }
 
-            if (!string.IsNullOrWhiteSpace(username) && !store.Blacklist.Usernames.Contains(username))
-                store.Blacklist.Usernames.Add(username);
+            AppendIfMissing(blacklist, "usernames", username);
+            AppendIfMissing(blacklist, "ips", ip);
 
-            if (!string.IsNullOrWhiteSpace(ip) && !store.Blacklist.Ips.Contains(ip))
-                store.Blacklist.Ips.Add(ip);
-
-            WriteUserStore(store);
+            WriteUsersFile(root);
 
             TavernAntiLogger.Warn($"Appended ban for username='{username}' ip='{ip}' to shared blacklist");
         }
@@ -46,82 +59,67 @@ public class TrustedUserStore : IService
     }
 
     /// <summary>
-    /// v1 permission gate for networked commands (see CommandPermissionPatch): the game's
-    /// real command permissions come from a Policy claim on the joining player's identity
-    /// token, which isn't retained anywhere accessible after join completes. Rather than
-    /// guess at reconstructing a UserInfoWithPermissions/Policies list, TavernAnti ships
-    /// its own explicit operator allow-list that server owners populate. This is coarser
-    /// than the game's real per-user policy scoping, but it is fail-closed: anyone not on
-    /// the list is denied, which is what actually closes the "any player can run admin
-    /// commands via RunCommandOnServer reflection" exploit.
+    /// Permission gate for networked commands (CommandPermissionPatch) and claimed
+    /// identity-token roles (IdentityTokenClaimGuardPatch/DeveloperClaimGuardPatch): a user is
+    /// trusted if users.json's users[username].roles contains TrustedRole ("owner"). Reusing
+    /// TavernLib's own trust store instead of a separate TavernAnti-owned allow-list means
+    /// there's one place server owners manage who's trusted, not two. Fail-closed: any lookup
+    /// failure (missing user, missing/malformed roles array, missing file) returns false.
     /// </summary>
     public bool IsOperator(string username)
     {
         if (string.IsNullOrWhiteSpace(username)) return false;
 
-        var operators = ReadOperators();
-        return operators.Operators.Any(op => string.Equals(op, username, StringComparison.OrdinalIgnoreCase));
-    }
-
-    private UserStore ReadUserStore()
-    {
-        var path = TavernAntiDirectories.Users;
-        Directory.CreateDirectory(TavernAntiDirectories.ModdingTavern);
-
-        if (!File.Exists(path)) return new UserStore();
-
-        var json = File.ReadAllText(path);
-        return JsonConvert.DeserializeObject<UserStore>(json) ?? new UserStore();
-    }
-
-    private void WriteUserStore(UserStore store)
-    {
-        var path = TavernAntiDirectories.Users;
-        Directory.CreateDirectory(TavernAntiDirectories.ModdingTavern);
-
-        File.WriteAllText(path, JsonConvert.SerializeObject(store, Formatting.Indented));
-    }
-
-    private OperatorStore ReadOperators()
-    {
-        var path = Path.Combine(TavernAntiDirectories.TavernAntiRoot, OperatorsFileName);
-        Directory.CreateDirectory(TavernAntiDirectories.TavernAntiRoot);
-
-        if (!File.Exists(path))
+        try
         {
-            var empty = new OperatorStore();
-            File.WriteAllText(path, JsonConvert.SerializeObject(empty, Formatting.Indented));
-            return empty;
+            var root = ReadUsersFile();
+            var users = root["users"] as JObject;
+
+            // TavernLib keys the users map by lowercased username (see AuthManager.cs -
+            // payload.Username.ToLower()) - match that convention for the lookup.
+            var entry = users?[username.ToLowerInvariant()] as JObject;
+            var roles = entry?["roles"] as JArray;
+
+            return roles != null && roles.Any(r => string.Equals(r.Value<string>(), TrustedRole, StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception e)
+        {
+            TavernAntiLogger.Error($"Failed to check trusted role for username='{username}': {e}");
+            return false;
+        }
+    }
+
+    private static void AppendIfMissing(JObject blacklist, string arrayPropertyName, string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return;
+
+        var array = blacklist[arrayPropertyName] as JArray;
+        if (array == null)
+        {
+            array = new JArray();
+            blacklist[arrayPropertyName] = array;
         }
 
+        if (!array.Any(v => string.Equals(v.Value<string>(), value, StringComparison.OrdinalIgnoreCase)))
+            array.Add(value);
+    }
+
+    private JObject ReadUsersFile()
+    {
+        var path = TavernAntiDirectories.Users;
+        Directory.CreateDirectory(TavernAntiDirectories.ModdingTavern);
+
+        if (!File.Exists(path)) return new JObject();
+
         var json = File.ReadAllText(path);
-        return JsonConvert.DeserializeObject<OperatorStore>(json) ?? new OperatorStore();
+        return string.IsNullOrWhiteSpace(json) ? new JObject() : JObject.Parse(json);
     }
 
-    // Mirrors TavernLib's UserConfig shape field-for-field so round-tripping this file
-    // never drops the "users" entries TavernLib itself owns.
-    private class UserStore
+    private void WriteUsersFile(JObject root)
     {
-        [JsonProperty("users")] public Dictionary<string, JsonUserEntry> Users { get; set; } = new();
-        [JsonProperty("whitelist")] public ListConfig Whitelist { get; set; } = new();
-        [JsonProperty("blacklist")] public ListConfig Blacklist { get; set; } = new();
-    }
+        var path = TavernAntiDirectories.Users;
+        Directory.CreateDirectory(TavernAntiDirectories.ModdingTavern);
 
-    private class JsonUserEntry
-    {
-        [JsonProperty("user_id")] public ulong UserId { get; set; }
-        [JsonProperty("token")] public string Token { get; set; }
-        [JsonProperty("registered_from")] public string RegisteredFrom { get; set; }
-    }
-
-    private class ListConfig
-    {
-        [JsonProperty("usernames")] public List<string> Usernames { get; set; } = [];
-        [JsonProperty("ips")] public List<string> Ips { get; set; } = [];
-    }
-
-    private class OperatorStore
-    {
-        [JsonProperty("operators")] public List<string> Operators { get; set; } = [];
+        File.WriteAllText(path, root.ToString(Formatting.Indented));
     }
 }

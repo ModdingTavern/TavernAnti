@@ -36,7 +36,8 @@ namespace TavernAnti.Patches;
 /// There is currently no accessible, verifiable source of per-player command permissions
 /// (the game's real Policy claims live on the join-time JWT and aren't retained anywhere after
 /// join completes) - see TrustedUserStore.IsOperator for why this ships as a coarser,
-/// fail-closed operator allow-list rather than a full per-player CommandContext reconstruction.
+/// fail-closed check against a "owner" role in users.json rather than a full per-player
+/// CommandContext reconstruction.
 ///
 /// MANDATORY LIVE VERIFICATION before trusting this in DryRun=false: confirm on a real local
 /// dedicated server that a non-operator client using the exploit's RunCommandOnServer
