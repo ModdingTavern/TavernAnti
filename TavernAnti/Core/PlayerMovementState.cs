@@ -18,6 +18,7 @@ public static class PlayerMovementState
         public Vector3 Position;
         public DateTime Timestamp;
         public int ConsecutiveOverspeedTicks;
+        public int ConsecutiveAscentTicks;
     }
 
     private static readonly ConcurrentDictionary<IPlayer, Entry> States = new();
@@ -35,13 +36,26 @@ public static class PlayerMovementState
         entry.Position = position;
         entry.Timestamp = DateTime.UtcNow;
         entry.ConsecutiveOverspeedTicks = 0;
+        entry.ConsecutiveAscentTicks = 0;
     }
 
     /// <summary>
     /// Evaluates an incoming position against the last accepted one without applying it.
     /// Returns null if the move is plausible, otherwise the violation to report.
     /// </summary>
-    public static ViolationType? Evaluate(IPlayer player, Vector3 incoming, float maxTeleportDistance, float maxSpeedMps, int speedViolationConsecutiveTicks)
+    /// <param name="isGrounded">
+    /// Server-computed grounded state for <paramref name="incoming"/> (e.g. a downward raycast) -
+    /// never the client-reported bit, since a flying client would just fake that too.
+    /// </param>
+    public static ViolationType? Evaluate(
+        IPlayer player,
+        Vector3 incoming,
+        bool isGrounded,
+        float maxTeleportDistance,
+        float maxSpeedMps,
+        int speedViolationConsecutiveTicks,
+        float minAscendSpeedMps,
+        int flyViolationConsecutiveTicks)
     {
         if (player == null) return null;
 
@@ -60,24 +74,47 @@ public static class PlayerMovementState
         if (distance > maxTeleportDistance)
         {
             entry.ConsecutiveOverspeedTicks = 0;
+            entry.ConsecutiveAscentTicks = 0;
             return ViolationType.Teleport;
+        }
+
+        // Tracked independently of the speed check below so one doesn't mask the other -
+        // a flying client can ascend well under the horizontal speed cap.
+        var verticalSpeed = (incoming.y - entry.Position.y) / deltaTime;
+        if (!isGrounded && verticalSpeed > minAscendSpeedMps)
+        {
+            entry.ConsecutiveAscentTicks++;
+        }
+        else
+        {
+            entry.ConsecutiveAscentTicks = 0;
         }
 
         var speed = distance / deltaTime;
         if (speed > maxSpeedMps)
         {
             entry.ConsecutiveOverspeedTicks++;
-            if (entry.ConsecutiveOverspeedTicks >= speedViolationConsecutiveTicks)
-            {
-                entry.ConsecutiveOverspeedTicks = 0;
-                return ViolationType.SpeedHack;
-            }
-
-            // Not enough consecutive over-limit ticks yet - could be a lag spike, don't flag yet.
-            return null;
+        }
+        else
+        {
+            entry.ConsecutiveOverspeedTicks = 0;
         }
 
-        entry.ConsecutiveOverspeedTicks = 0;
+        // Checked ahead of the speed hack below: a jump's ascent is grounded=false for only a
+        // couple of ticks before gravity turns it around, so a sustained run of them (unlike a
+        // single tick) isn't explainable by a normal jump.
+        if (entry.ConsecutiveAscentTicks >= flyViolationConsecutiveTicks)
+        {
+            entry.ConsecutiveAscentTicks = 0;
+            return ViolationType.Flying;
+        }
+
+        if (entry.ConsecutiveOverspeedTicks >= speedViolationConsecutiveTicks)
+        {
+            entry.ConsecutiveOverspeedTicks = 0;
+            return ViolationType.SpeedHack;
+        }
+
         return null;
     }
 

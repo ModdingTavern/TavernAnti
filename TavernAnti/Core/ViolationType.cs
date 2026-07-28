@@ -4,6 +4,7 @@ public enum ViolationType
 {
     SpeedHack,
     Teleport,
+    Flying,
     InteractRange,
     InteractRate,
     UnauthorizedWrite,

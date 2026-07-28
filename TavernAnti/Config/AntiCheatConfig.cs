@@ -11,6 +11,12 @@ public class AntiCheatConfig
     [JsonProperty("max_teleport_distance")] public float MaxTeleportDistance { get; set; } = 15f;
     [JsonProperty("speed_violation_consecutive_ticks")] public int SpeedViolationConsecutiveTicks { get; set; } = 3;
 
+    // Flight detection (MovementPlausibilityPatch) - independent server-side ground check,
+    // does not trust the client-reported grounded bit.
+    [JsonProperty("fly_ground_check_distance")] public float FlyGroundCheckDistance { get; set; } = 1.0f;
+    [JsonProperty("fly_min_ascend_speed_mps")] public float FlyMinAscendSpeedMps { get; set; } = 0.75f;
+    [JsonProperty("fly_violation_consecutive_ticks")] public int FlyViolationConsecutiveTicks { get; set; } = 5;
+
     // Interaction range/rate (InteractionGuardPatch)
     [JsonProperty("max_interact_reach")] public float MaxInteractReach { get; set; } = 3.0f;
     [JsonProperty("max_interacts_per_second")] public int MaxInteractsPerSecond { get; set; } = 8;
@@ -21,6 +27,7 @@ public class AntiCheatConfig
     {
         [ViolationType.SpeedHack] = 2,
         [ViolationType.Teleport] = 5,
+        [ViolationType.Flying] = 4,
         [ViolationType.InteractRange] = 3,
         [ViolationType.InteractRate] = 2,
         [ViolationType.UnauthorizedWrite] = 4,

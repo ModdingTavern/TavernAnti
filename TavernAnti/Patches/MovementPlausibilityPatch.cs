@@ -1,3 +1,4 @@
+using Alta.Global;
 using Alta.Networking;
 using Alta.Networking.Scripts.Player;
 using Alta.Serialization;
@@ -46,12 +47,17 @@ public static class MovementPlausibilityPatch
         var tracker = TavernServices.GetService<ViolationTracker>();
         if (config == null || tracker == null) return;
 
+        var isGrounded = IsGrounded(newPosition, config.FlyGroundCheckDistance);
+
         var violation = PlayerMovementState.Evaluate(
             player,
             newPosition,
+            isGrounded,
             config.MaxTeleportDistance,
             config.MaxPlayerSpeedMps,
-            config.SpeedViolationConsecutiveTicks);
+            config.SpeedViolationConsecutiveTicks,
+            config.FlyMinAscendSpeedMps,
+            config.FlyViolationConsecutiveTicks);
 
         if (violation == null)
         {
@@ -65,5 +71,19 @@ public static class MovementPlausibilityPatch
 
         var lastGood = PlayerMovementState.GetLastKnownPosition(player) ?? __state;
         __instance.transform.position = lastGood;
+    }
+
+    /// <summary>
+    /// Independent server-side ground check (downward raycast against the same StandableMask
+    /// the client's own locomotion uses), deliberately not the client-reported grounded bit -
+    /// LocomotionController.IsGrounded is never serialized to the server, and a client capable
+    /// of flying could set it to whatever it wants anyway.
+    /// </summary>
+    private static bool IsGrounded(Vector3 position, float groundCheckDistance)
+    {
+        var settings = GlobalSettings<SmoothLocomotionSettings>.Instance;
+        if (settings == null) return true; // fail open - don't flag before world/settings are ready
+
+        return Physics.Raycast(position + Vector3.up * 0.1f, Vector3.down, groundCheckDistance, settings.StandableMask);
     }
 }
