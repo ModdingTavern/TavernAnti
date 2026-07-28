@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Reflection;
 using HarmonyLib;
 using MelonLoader;
@@ -56,6 +57,13 @@ public class TavernAntiPlugin : MelonPlugin
             // itself now that TavernLib.dll is a real reference, not TavernAnti's own copy.
             // Safe: keyed by concrete type, and none of TavernAnti's service types collide with
             // TavernLib's (TavernApiManager, DebugHelper, etc).
+            // TavernLib's own configs live flat in TavernDirectories.ModdingTavern, which
+            // already exists by this point (created as a side effect of TeenyPatches'
+            // console-token setup). TavernAntiRoot is a subfolder of that TavernAnti itself
+            // introduces, so unlike TavernLib's configs, nothing else creates it - ServerConfigFile
+            // only calls File.CreateText, which throws DirectoryNotFoundException on a missing parent.
+            Directory.CreateDirectory(TavernAntiDirectories.TavernAntiRoot);
+
             var config = new AntiCheatConfigFile(TavernAntiDirectories.AntiCheatConfig);
             config.ReadFromFile();
             TavernServices.AddService(config);
